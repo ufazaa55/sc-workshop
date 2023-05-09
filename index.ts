@@ -1,36 +1,86 @@
 import express from "express";
+import * as trpcExpress from "@trpc/server/adapters/express";
+import { expressHandler } from "trpc-playground/handlers/express";
 import { z } from "zod";
-const app = express();
-const port = 3000;
+import { createContext, appRouter } from "./router";
+const runApp = async () => {
+  const app = express();
+  app.use(express.json());
+  const port = 3000;
+  const trpcEndpoint = "/api/trpc";
+  const playgroundEndpoint = "/playground";
 
-const schema = z.object({
-    name: z.string(),
-    lastName: z.string(),
-    age: z.number().refine((n) => n === 30 , "age must be equal 30"),
-});
+  const schema = z.object({
+    name: z
+      .string()
+      .toUpperCase()
+      .transform((n) => n.length),
+    age: z
+      .number()
+      .refine((n) => n > 0 && n <= 50, "Age must be between 0 - 50"),
+  });
 
-app.use(express.json());
+  const lineSchema = z.object({
+    message: z.string().max(1000),
+  });
 
-app.get("/", (req, res) => {
-    const rt:z.infer <typeof schema> = {
-        name: "ufa",
-        lastName: "manit",
-        age: 30,
+  app.use(
+    trpcEndpoint,
+    trpcExpress.createExpressMiddleware({
+      router: appRouter,
+      createContext,
+    })
+  );
+
+  app.use(
+    playgroundEndpoint,
+    await expressHandler({
+      trpcApiEndpoint: trpcEndpoint,
+      playgroundEndpoint,
+      router: appRouter,
+    })
+  );
+
+  app.get("/", (req, res) => {
+    const rt: z.infer<typeof schema> = {
+      age: 30,
+      name: 2,
     };
-    res.send("Hello World Hi!");
-});
+    res.json(rt);
+  });
 
-app.post("/", (req, res) => {
+  app.post("/", (req, res) => {
     const input = schema.safeParse(req.body);
-    if (input.success){
-        res.send(`Hello ${input.data.name} ${input.data.lastName} ${input.data.age} !`);
+    if (input.success) {
+      res.send(`Hello ${input.data.name} ${input.data.age}!`);
+    } else {
+      res.json(input.error);
     }
-    else {
-        res.json(input.error);
-      }
-   
-});
+  });
 
-app.listen(port, () => {
+  app.post("/line", async (req, res) => {
+    const input = lineSchema.safeParse(req.body);
+    if (!input.success) {
+      res.json(input.error);
+      return;
+    }
+    const formData = new FormData();
+    formData.append("message", input.data.message);
+    await fetch("https://notify-api.line.me/api/notify", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer s7ykEMVQMA5JQbq8OuexUtKwgdDRmFfD1mq2nqxo5t6`,
+      },
+      body: formData,
+    })
+      .then((v) => v.json())
+      .then((v) => res.json(v))
+      .catch((e) => res.json(e));
+  });
+
+  app.listen(port, () => {
     console.log(`Example app listening on port ${port}`);
-});
+  });
+};
+
+runApp();
